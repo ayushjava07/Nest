@@ -74,6 +74,7 @@ class TestListProjects:
         mock_request = MagicMock()
         mock_filters = MagicMock()
         mock_filters.level = None
+        mock_filters.type = None
         mock_filters.q = None
 
         mock_queryset = MagicMock()
@@ -92,6 +93,7 @@ class TestListProjects:
         mock_request = MagicMock()
         mock_filters = MagicMock()
         mock_filters.level = "flagship"
+        mock_filters.type = None
         mock_filters.q = "name:security"
 
         mock_queryset = MagicMock()
@@ -107,6 +109,45 @@ class TestListProjects:
             "created_at", "-stars_count", "-forks_count"
         )
         assert result == mock_filtered_queryset
+
+    @patch("apps.api.rest.v0.project.apply_structured_search")
+    @patch("apps.api.rest.v0.project.ProjectModel")
+    def test_list_projects_with_type_filter(self, mock_project_model, mock_apply_search):
+        """Test list projects with type filter."""
+        mock_request = MagicMock()
+        mock_filters = MagicMock()
+        mock_filters.level = None
+        mock_filters.type = "code,tool"
+        mock_filters.q = None
+
+        mock_queryset = MagicMock()
+        mock_filtered_queryset = MagicMock()
+        mock_apply_search.return_value = mock_queryset
+        mock_queryset.filter.return_value = mock_filtered_queryset
+        mock_filtered_queryset.order_by.return_value = mock_filtered_queryset
+
+        result = list_projects(mock_request, mock_filters, ordering=None)
+
+        mock_queryset.filter.assert_called_with(type__in=["code", "tool"])
+        assert result == mock_filtered_queryset
+
+    @patch("apps.api.rest.v0.project.apply_structured_search")
+    @patch("apps.api.rest.v0.project.ProjectModel")
+    def test_list_projects_with_invalid_type_filter(self, mock_project_model, mock_apply_search):
+        """Test list projects with invalid type filter."""
+        mock_request = MagicMock()
+        mock_filters = MagicMock()
+        mock_filters.level = None
+        mock_filters.type = "invalid"
+        mock_filters.q = None
+
+        mock_queryset = MagicMock()
+        mock_apply_search.return_value = mock_queryset
+
+        result = list_projects(mock_request, mock_filters, ordering=None)
+
+        assert result.status_code == HTTPStatus.BAD_REQUEST
+        assert b"Invalid project types: invalid" in result.content
 
 
 class TestGetProject:

@@ -7,13 +7,14 @@ from typing import Literal
 from django.http import HttpRequest
 from ninja import Field, FilterSchema, Path, Query, Schema
 from ninja.decorators import decorate_view
+from ninja.errors import HttpError
 from ninja.pagination import RouterPaginated
 from ninja.responses import Response
 
 from apps.api.decorators.cache import cache_response
 from apps.api.rest.v0.common import Leader, ValidationErrorSchema
 from apps.api.rest.v0.structured_search import FieldConfig, apply_structured_search
-from apps.owasp.models.enums.project import ProjectLevel
+from apps.owasp.models.enums.project import ProjectLevel, ProjectType
 from apps.owasp.models.project import Project as ProjectModel
 
 PROJECT_SEARCH_FIELDS: dict[str, FieldConfig] = {
@@ -37,6 +38,7 @@ class ProjectBase(Schema):
     key: str
     level: ProjectLevel
     name: str
+    type: ProjectType
     updated_at: datetime
 
     @staticmethod
@@ -81,6 +83,10 @@ class ProjectFilter(FilterSchema):
         None,
         description="Structured search query (e.g. 'name:security stars:>100')",
     )
+    type: str | None = Field(
+        None,
+        description="Comma-separated list of project types (e.g. 'code,tool')",
+    )
 
 
 @router.get(
@@ -108,6 +114,18 @@ def list_projects(
 
     if filters.level is not None:
         queryset = queryset.filter(level=filters.level)
+    if filters.type:
+        types = [t.strip() for t in filters.type.split(",") if t.strip()]
+        valid_types = set(ProjectType.values)
+
+        invalid_types = [t for t in types if t not in valid_types]
+        if invalid_types:
+            raise HttpError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                message=f"Invalid project types: {', '.join(invalid_types)}",
+            )
+
+        queryset = queryset.filter(type__in=types)
 
     return queryset.order_by(ordering or "-level_raw", "-stars_count", "-forks_count")
 

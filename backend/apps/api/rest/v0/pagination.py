@@ -5,6 +5,7 @@ from typing import Any
 from django.http import Http404
 from ninja import Field, Schema
 from ninja.pagination import PaginationBase
+from ninja.responses import Response
 
 
 class CustomPagination(PaginationBase):
@@ -30,6 +31,9 @@ class CustomPagination(PaginationBase):
 
     def paginate_queryset(self, queryset, pagination: Input, **params):
         """Paginate the queryset and return standardized output."""
+        if isinstance(queryset, Response):
+            return queryset
+
         page = pagination.page
         page_size = pagination.page_size
         total_count = queryset.count()
