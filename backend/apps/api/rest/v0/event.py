@@ -6,6 +6,7 @@ from typing import Literal
 from django.http import HttpRequest
 from ninja import Path, Query, Schema
 from ninja.decorators import decorate_view
+from ninja.errors import HttpError
 from ninja.pagination import RouterPaginated
 from ninja.responses import Response
 
@@ -84,14 +85,33 @@ def list_events(
         None,
         description="Filter for upcoming events",
     ),
+    category: str | None = Query(
+        None,
+        description="Comma-separated list of event categories (e.g. 'conference,workshop')",
+    ),
 ) -> list[Event]:
     """Get list of events."""
-    if is_upcoming:
-        return filters.filter(
-            EventModel.upcoming_events().order_by(ordering or "start_date", "end_date")
-        )
+    queryset = EventModel.upcoming_events() if is_upcoming else EventModel.objects.all()
 
-    return filters.filter(EventModel.objects.order_by(ordering or "-start_date", "-end_date"))
+    # Apply category filter
+    if category:
+        categories = [c.strip() for c in category.split(",") if c.strip()]
+        valid_categories = set(EventModel.Category.values)
+
+        invalid_categories = [c for c in categories if c not in valid_categories]
+        if invalid_categories:
+            raise HttpError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                message=f"Invalid event categories: {', '.join(invalid_categories)}",
+            )
+
+        queryset = queryset.filter(category__in=categories)
+
+    # Apply ordering
+    queryset = queryset.order_by(ordering or "-start_date", "-end_date")
+
+    # Apply location filtering
+    return filters.filter(queryset)
 
 
 @router.get(

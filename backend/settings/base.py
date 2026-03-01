@@ -15,6 +15,7 @@ class Base(Configuration):
     ENVIRONMENT = os.environ.get("DJANGO_CONFIGURATION", "Local")
 
     ALLOWED_HOSTS = values.ListValue()
+    APP_NAME = "OWASP Nest"
     AUTH_USER_MODEL = "nest.User"
     CORS_ALLOW_CREDENTIALS = True
     DEBUG = False

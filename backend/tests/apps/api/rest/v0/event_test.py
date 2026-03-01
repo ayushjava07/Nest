@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
+from ninja.errors import HttpError
 
 from apps.api.rest.v0.event import EventDetail, get_event, list_events
 from apps.owasp.models.event import Event as EventModel
@@ -60,12 +61,15 @@ class TestListEvents:
         mock_request = MagicMock()
         mock_filters = MagicMock()
         mock_queryset = MagicMock()
-        mock_event_model.objects.order_by.return_value = mock_queryset
+        mock_event_model.objects.all.return_value = mock_queryset
+        mock_queryset.order_by.return_value = mock_queryset
         mock_filters.filter.return_value = mock_queryset
 
-        result = list_events(mock_request, mock_filters, ordering=None, is_upcoming=None)
+        result = list_events(
+            mock_request, mock_filters, ordering=None, is_upcoming=None, category=None
+        )
 
-        mock_event_model.objects.order_by.assert_called_with("-start_date", "-end_date")
+        mock_queryset.order_by.assert_called_with("-start_date", "-end_date")
         assert result == mock_queryset
 
     @patch("apps.api.rest.v0.event.EventModel")
@@ -74,12 +78,15 @@ class TestListEvents:
         mock_request = MagicMock()
         mock_filters = MagicMock()
         mock_queryset = MagicMock()
-        mock_event_model.objects.order_by.return_value = mock_queryset
+        mock_event_model.objects.all.return_value = mock_queryset
+        mock_queryset.order_by.return_value = mock_queryset
         mock_filters.filter.return_value = mock_queryset
 
-        result = list_events(mock_request, mock_filters, ordering="latitude", is_upcoming=None)
+        result = list_events(
+            mock_request, mock_filters, ordering="latitude", is_upcoming=None, category=None
+        )
 
-        mock_event_model.objects.order_by.assert_called_with("latitude", "-end_date")
+        mock_queryset.order_by.assert_called_with("latitude", "-end_date")
         assert result == mock_queryset
 
     @patch("apps.api.rest.v0.event.EventModel")
@@ -88,13 +95,56 @@ class TestListEvents:
         mock_request = MagicMock()
         mock_filters = MagicMock()
         mock_upcoming_qs = MagicMock()
-        mock_event_model.upcoming_events.return_value.order_by.return_value = mock_upcoming_qs
+        mock_event_model.upcoming_events.return_value = mock_upcoming_qs
+        mock_upcoming_qs.order_by.return_value = mock_upcoming_qs
         mock_filters.filter.return_value = mock_upcoming_qs
 
-        result = list_events(mock_request, mock_filters, ordering=None, is_upcoming=True)
+        result = list_events(
+            mock_request, mock_filters, ordering=None, is_upcoming=True, category=None
+        )
 
         mock_event_model.upcoming_events.assert_called_once()
         assert result == mock_upcoming_qs
+
+    @patch("apps.api.rest.v0.event.EventModel")
+    def test_list_events_with_category_filter(self, mock_event_model):
+        """Test listing events with valid category filter."""
+        mock_request = MagicMock()
+        mock_filters = MagicMock()
+        mock_queryset = MagicMock()
+        mock_filtered_queryset = MagicMock()
+        mock_event_model.Category.values = ["appsec_days", "global", "other", "partner"]
+
+        mock_event_model.objects.all.return_value = mock_queryset
+        mock_queryset.filter.return_value = mock_filtered_queryset
+        mock_filtered_queryset.order_by.return_value = mock_filtered_queryset
+        mock_filters.filter.return_value = mock_filtered_queryset
+
+        result = list_events(
+            mock_request,
+            mock_filters,
+            ordering=None,
+            is_upcoming=None,
+            category="appsec_days,global",
+        )
+
+        mock_queryset.filter.assert_called_with(category__in=["appsec_days", "global"])
+        assert result == mock_filtered_queryset
+
+    @patch("apps.api.rest.v0.event.EventModel")
+    def test_list_events_invalid_category(self, mock_event_model):
+        mock_request = MagicMock()
+        mock_filters = MagicMock()
+        mock_event_model.Category.values = ["appsec_days", "global", "other", "partner"]
+
+        with pytest.raises(HttpError):
+            list_events(
+                mock_request,
+                mock_filters,
+                ordering=None,
+                is_upcoming=None,
+                category="invalid_category",
+            )
 
 
 class TestGetEvent:
@@ -121,3 +171,66 @@ class TestGetEvent:
         result = get_event(mock_request, "nonexistent-event")
 
         assert result.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.django_db
+class TestEventIntegration:
+    """Integration tests for event API endpoints."""
+
+    def test_list_events_with_category_integration(self, client):
+        """Test API endpoint with real DB events filtering by category."""
+        today = timezone.now().date()
+        EventModel.objects.create(
+            key="conf-1",
+            name="Conference 1",
+            start_date=today,
+            category=EventModel.Category.GLOBAL,
+        )
+        EventModel.objects.create(
+            key="work-1",
+            name="Workshop 1",
+            start_date=today,
+            category=EventModel.Category.APPSEC_DAYS,
+        )
+        EventModel.objects.create(
+            key="train-1",
+            name="Training 1",
+            start_date=today,
+            category=EventModel.Category.PARTNER,
+        )
+
+        response = client.get("/api/v0/events/?category=global")
+        assert response.status_code == HTTPStatus.OK
+        data = response.json()
+
+        # Data format is likely paginated under 'items' since it's RouterPaginated
+        items = data.get("items", data)
+        if isinstance(items, dict):
+            # Fallback if structure is e.g. {"data": [...], "count": ...}
+            items = items.get("data", items)
+
+        assert len(items) == 1
+        assert items[0]["key"] == "conf-1"
+
+    def test_get_event_integration_success(self, client):
+        """Test retrieving a single event from the database."""
+        today = timezone.now().date()
+        EventModel.objects.create(
+            key="test-event-integration",
+            name="Integration Test Event",
+            start_date=today,
+            category=EventModel.Category.GLOBAL,
+        )
+
+        response = client.get("/api/v0/events/test-event-integration")
+        assert response.status_code == HTTPStatus.OK
+
+        data = response.json()
+        assert data["key"] == "test-event-integration"
+        assert data["name"] == "Integration Test Event"
+
+    def test_get_event_integration_not_found(self, client):
+        """Test retrieving a non-existent event."""
+        response = client.get("/api/v0/events/non-existent-event-abc")
+        assert response.status_code == HTTPStatus.NOT_FOUND
+        assert response.json() == {"message": "Event not found"}

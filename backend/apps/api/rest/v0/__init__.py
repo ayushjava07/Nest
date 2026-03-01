@@ -89,12 +89,12 @@ elif settings.IS_STAGING_ENVIRONMENT:
             }
         ],
     }
-elif settings.IS_LOCAL_ENVIRONMENT:
+elif settings.IS_LOCAL_ENVIRONMENT or settings.IS_TEST_ENVIRONMENT:
     api_settings_customization = {
         "auth": None,
         "servers": [
             {
-                "description": "Local",
+                "description": "Local/Test",
                 "url": settings.SITE_URL,
             }
         ],
